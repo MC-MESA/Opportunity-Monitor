@@ -1,0 +1,101 @@
+name: Add a link from an approved issue
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+# Share the queue with the daily check so the two never write to the repo at once
+concurrency:
+  group: check-pages
+  cancel-in-progress: false
+
+jobs:
+  add:
+    # Only act on issues created by the program's GitHub account (the one the flow signs in with).
+    # If a different account ever runs the flow, change MC-MESA below.
+    if: github.event.issue.user.login == 'MC-MESA'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add the link to urls.csv
+        id: add
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          python3 - <<'PY'
+          import csv, os, re
+
+          def finish(status, message):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+                  out.write(f"status={status}\nmessage={message}\n")
+              raise SystemExit(0)
+
+          body = (os.environ.get("ISSUE_BODY") or "").strip()
+          lines = [l.strip() for l in body.splitlines() if l.strip()]
+          if len(lines) != 1:
+              finish("invalid", "Not added. The issue body must be exactly one line in the form: Name,Website")
+
+          name, sep, url = lines[0].rpartition(",")
+          name = name.strip().replace('"', "").replace(",", ";")
+          url = url.strip()
+          if not sep or not name:
+              finish("invalid", "Not added. The line must look like: Name,Website")
+          if not re.fullmatch(r"https?://[^\s,\"<>]+", url, re.IGNORECASE):
+              finish("invalid", "Not added. The website must start with http:// or https:// and contain no spaces.")
+
+          def norm(u):
+              return u.strip().lower().rstrip("/")
+
+          path = "urls.csv"
+          existing = []
+          if os.path.exists(path):
+              with open(path, newline="", encoding="utf-8-sig") as f:
+                  existing = [norm(r.get("url", "")) for r in csv.DictReader(f)]
+          if norm(url) in existing:
+              finish("duplicate", "Not added. That website is already in urls.csv.")
+
+          needs_header = (not os.path.exists(path)) or os.path.getsize(path) == 0
+          needs_newline = False
+          if not needs_header:
+              with open(path, "rb") as f:
+                  f.seek(-1, os.SEEK_END)
+                  needs_newline = f.read(1) not in (b"\n", b"\r")
+          with open(path, "a", newline="", encoding="utf-8") as f:
+              if needs_newline:
+                  f.write("\n")
+              writer = csv.writer(f)
+              if needs_header:
+                  writer.writerow(["name", "url"])
+              writer.writerow([name, url])
+          finish("added", f"Added to urls.csv: {name}")
+          PY
+
+      - name: Save the change
+        if: steps.add.outputs.status == 'added'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          git config user.name "opportunity-bot"
+          git config user.email "opportunity-bot@users.noreply.github.com"
+          git add urls.csv
+          git commit -m "Add link from issue #${ISSUE_NUMBER}"
+          git pull --rebase
+          git push
+
+      - name: Reply on the issue and close it
+        if: always() && steps.add.outputs.status != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          STATUS: ${{ steps.add.outputs.status }}
+          MESSAGE: ${{ steps.add.outputs.message }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$MESSAGE"
+          if [ "$STATUS" = "added" ] || [ "$STATUS" = "duplicate" ]; then
+            gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY"
+          fi
