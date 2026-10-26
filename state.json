@@ -128,8 +128,11 @@
   "last_checked": "2026-10-26"
  },
  "https://sacredheartjesuschurch.org/beca-san-juan-diego/": {
-  "was_manual": true,
-  "last_checked": "2026-10-26"
+  "last_checked": "2026-10-26",
+  "sig": "f697b4e8c9eb31f7",
+  "key_lines": [],
+  "last_changed": "",
+  "prev_key_lines": []
  },
  "https://shpe.org/engage/programs/scholarshpe/": {
   "sig": "d2560dd2316ea1c7",
@@ -198,7 +201,20 @@
   "last_checked": "2026-10-26"
  },
  "https://swe.org/apply-for-a-swe-scholarship/": {
-  "last_checked": "2026-10-26"
+  "last_checked": "2026-10-26",
+  "sig": "150c4bd04735fefd",
+  "key_lines": [
+   "SWE Awards Program Open January 1 - March 1.",
+   "Open date: December 1, 2026",
+   "Deadline: February 1, 2027",
+   "Open date: February 8, 2027",
+   "Deadline: March 31, 2027",
+   "Collegiate/Graduate application opens",
+   "Emerging First Year & India application opens",
+   "These sessions are hosted when applications open, typically in January (Collegiate/Graduate) and February (Emerging First Year and India)."
+  ],
+  "last_changed": "",
+  "prev_key_lines": []
  },
  "https://www.scvswe.org/scholarship-application": {
   "sig": "9587bd1ba7fb55dc",
@@ -259,8 +275,11 @@
   "last_checked": "2026-10-26"
  },
  "https://nasa-ncas.org/student-registration/": {
-  "was_manual": true,
-  "last_checked": "2026-10-26"
+  "last_checked": "2026-10-26",
+  "sig": "0236d9462522bc29",
+  "key_lines": [],
+  "last_changed": "",
+  "prev_key_lines": []
  },
  "https://www.stanfordmicrofluidics.com/summer-research-program": {
   "sig": "014815860069aebf",
@@ -299,13 +318,18 @@
   "last_checked": "2026-10-26"
  },
  "https://med.stanford.edu/cvi/education/cvi-summer-research-program.html": {
-  "sig": "d59c453b135d7c21",
+  "sig": "1c2709811ba8e744",
   "key_lines": [
+   "Applications due December 18, 2026 11:59 PM PST",
+   "Letters of Recommendation Submission deadline is January 3, 2027 11:59 pm PST.",
    "Application deadline: December 19, 2025",
    "Submission deadline: January 5, 2026"
   ],
-  "last_changed": "",
-  "prev_key_lines": [],
+  "last_changed": "2026-10-26",
+  "prev_key_lines": [
+   "Application deadline: December 19, 2025",
+   "Submission deadline: January 5, 2026"
+  ],
   "last_checked": "2026-10-26"
  },
  "https://summer.stanford.edu/cost/tuition-grants": {
@@ -388,9 +412,9 @@
   "last_checked": "2026-10-26"
  },
  "https://gladstone.org/training/pumas-summer-internship-program": {
-  "sig": "245529acd613b92b",
+  "sig": "af53efa4c861445d",
   "key_lines": [],
-  "last_changed": "",
+  "last_changed": "2026-10-26",
   "prev_key_lines": [],
   "last_checked": "2026-10-26"
  },
@@ -504,9 +528,9 @@
   "last_checked": "2026-10-26"
  },
  "https://www.calacademy.org/biological-illustration-internship": {
-  "sig": "42636d08e57aa339",
+  "sig": "9ad9d65315bc9de5",
   "key_lines": [],
-  "last_changed": "",
+  "last_changed": "2026-10-26",
   "prev_key_lines": [],
   "last_checked": "2026-10-26"
  },
