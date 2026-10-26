@@ -55,7 +55,9 @@ KEYWORD_RE = re.compile(
 STATUS_RE = re.compile(
     r"(applications?\s+(?:are\s+)?(?:now\s+)?(?:open|closed)|now\s+open|"
     r"now\s+accepting|currently\s+accepting|no\s+longer\s+accepting|"
-    r"applications?\s+(?:has|have)\s+closed|opens?\s+soon|coming\s+soon)",
+    r"applications?\s+(?:has|have)\s+closed|opens?\s+soon|coming\s+soon|"
+    r"register\s+now|apply\s+now|registration\s+(?:is\s+)?(?:now\s+)?(?:open|closed)|"
+    r"applications?\s+(?:are\s+)?(?:now\s+)?being\s+accepted)",
     re.I,
 )
 LOGIN_HINTS = ("login", "signin", "sign-in", "sso", "auth")
@@ -83,12 +85,27 @@ def fetch(url):
 
 
 def extract(html):
-    """Return (full_text, key_lines) from a page's HTML."""
+    """Return (main_text, key_lines).
+
+    key_lines are searched across the WHOLE page, including banners in the
+    header or footer (that is where "Applications now open!" usually lives).
+    main_text leaves out header/footer/menus and is used to decide whether the
+    page has real content and as the fallback fingerprint.
+    """
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "svg", "header", "footer", "nav"]):
+    extras = []
+    meta = soup.find("meta", attrs={"name": "description"})
+    if meta and meta.get("content"):
+        extras.append(meta["content"])
+    for tag in soup(["script", "style", "noscript", "svg", "template"]):
         tag.decompose()
-    raw = soup.get_text("\n")
-    parts = re.split(r"(?<=[.!?])\s+|\n+", raw)
+    whole = BeautifulSoup(str(soup), "html.parser")
+    for tag in soup(["header", "footer", "nav"]):
+        tag.decompose()
+    main_text = clean(soup.get_text("\n"))
+
+    raw_all = "\n".join(extras) + "\n" + whole.get_text("\n")
+    parts = re.split(r"(?<=[.!?])\s+|\n+", raw_all)
     key_lines, seen = [], set()
     for part in parts:
         line = clean(part)
@@ -101,7 +118,7 @@ def extract(html):
                 key_lines.append(line[:250])
         if len(key_lines) >= MAX_KEY_LINES:
             break
-    return clean(raw), key_lines
+    return main_text, key_lines
 
 
 def digest(text):
@@ -123,7 +140,8 @@ def check_one(url, prev):
         return "manual", "", status, state          # redirected to a login page
 
     text, key_lines = extract(html)
-    if len(text) < MIN_TEXT_CHARS:
+    if len(text) < MIN_TEXT_CHARS and not key_lines:
+        state["was_manual"] = True
         return "manual", "", status, state          # page builds itself with JavaScript
 
     if key_lines:
@@ -131,9 +149,15 @@ def check_one(url, prev):
     else:
         basis, sig = "full page", digest(text[:20000])
 
+    was_manual = bool(prev and prev.get("was_manual"))
+    state.pop("was_manual", None)
     if not prev or "sig" not in prev:
-        result = "new"                              # first time we've seen it
-        state.update(sig=sig, key_lines=key_lines, last_changed="", prev_key_lines=[])
+        if was_manual and key_lines:
+            result = "changed"                      # was unreadable, now shows date/status wording
+            state.update(sig=sig, key_lines=key_lines, last_changed=now_iso(), prev_key_lines=[])
+        else:
+            result = "new"                          # first time we've seen it
+            state.update(sig=sig, key_lines=key_lines, last_changed="", prev_key_lines=[])
     elif sig != prev["sig"]:
         result = "changed"
         state.update(
