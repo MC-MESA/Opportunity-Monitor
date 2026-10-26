@@ -7,21 +7,31 @@ sentences that talk about opening/closing/deadlines/dates, and compares them
 to the previous run. Writes:
 
   state.json   - memory of the last run (do not edit)
-  changes.csv  - one row per opportunity; Excel reads this file
+  changes.csv  - one row per opportunity, read by people on GitHub
+
+key_lines only shows sentences about the present or future. Sentences whose
+dates are all in the past (for example "Applications due May 10, 2025") are
+hidden so nobody mistakes an old deadline for an open opportunity.
 
 It never logs in anywhere and stores no personal data.
 """
+import calendar
 import csv
 import hashlib
 import json
+import os
 import re
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+
+# "Today" for all date comparisons. CHECKER_TODAY (YYYY-MM-DD) exists only for testing.
+TODAY = (date.fromisoformat(os.environ["CHECKER_TODAY"])
+         if os.environ.get("CHECKER_TODAY") else datetime.now(timezone.utc).date())
 
 URLS_FILE = Path("urls.csv")
 STATE_FILE = Path("state.json")
@@ -63,8 +73,125 @@ STATUS_RE = re.compile(
 LOGIN_HINTS = ("login", "signin", "sign-in", "sso", "auth")
 
 
+DEADLINE_WORD_RE = re.compile(r"\b(deadline|due|close|closes|closing|by)\b", re.I)
+FULL_DATE_RE = re.compile(
+    rf"\b({MONTHS})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(20\d\d)\b", re.I
+)
+MONTH_NUMBER = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+
+
+NUMERIC_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})\b")
+NUMERIC_MD_RE = re.compile(r"\b\d{1,2}/\d{1,2}\b")
+ISO_DATE_RE = re.compile(r"\b(20\d\d)-(\d{2})-(\d{2})\b")
+MONTH_YEAR_RE = re.compile(rf"\b({MONTHS})\.?,?\s+(20\d\d)\b", re.I)
+MONTH_DAY_RE = re.compile(rf"\b({MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b", re.I)
+SCHOOL_YEAR_RE = re.compile(r"\b(20\d\d)\s*[-\u2013/]\s*(20\d\d|\d\d)\b")
+YEAR_RE = re.compile(r"(?<![\d,$.])\b(20(?:1[5-9]|[2-9]\d))\b(?![,.]?\d)")
+
+
+def _blank(text, matches):
+    for m in matches:
+        text = text[:m.start()] + " " * (m.end() - m.start()) + text[m.end():]
+    return text
+
+
+def line_dates(line):
+    """Find the dates written in a sentence.
+
+    Returns (known, unclear). `known` holds the LAST day of each period we can
+    place on the calendar: a full date counts as that day, "Month YYYY" as the
+    end of that month, and a bare year (or school year like 2025-26) as the end
+    of that year. `unclear` is True when the sentence has a date we cannot place,
+    such as "April 1" with no year.
+    """
+    known, unclear, work = [], False, line
+
+    def add(y, mo, d):
+        nonlocal unclear
+        try:
+            known.append(date(y, mo, d))
+        except ValueError:
+            unclear = True
+
+    ms = list(FULL_DATE_RE.finditer(work))
+    for m in ms:
+        add(int(m.group(3)), MONTH_NUMBER[m.group(1)[:3].lower()], int(m.group(2)))
+    work = _blank(work, ms)
+
+    ms = list(NUMERIC_DATE_RE.finditer(work))
+    for m in ms:
+        y = int(m.group(3))
+        add(y + 2000 if y < 100 else y, int(m.group(1)), int(m.group(2)))
+    work = _blank(work, ms)
+
+    ms = list(ISO_DATE_RE.finditer(work))
+    for m in ms:
+        add(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    work = _blank(work, ms)
+
+    ms = list(MONTH_YEAR_RE.finditer(work))
+    for m in ms:
+        y, mo = int(m.group(2)), MONTH_NUMBER[m.group(1)[:3].lower()]
+        add(y, mo, calendar.monthrange(y, mo)[1])
+    work = _blank(work, ms)
+
+    ms = list(SCHOOL_YEAR_RE.finditer(work))
+    for m in ms:
+        start, end = int(m.group(1)), m.group(2)
+        end_year = int(end) if len(end) == 4 else (start // 100) * 100 + int(end)
+        if end_year < start:
+            unclear = True
+        else:
+            add(end_year, 12, 31)
+    work = _blank(work, ms)
+
+    ms = list(MONTH_DAY_RE.finditer(work)) + list(NUMERIC_MD_RE.finditer(work))
+    if ms:
+        unclear = True
+    work = _blank(work, ms)
+
+    for m in YEAR_RE.finditer(work):
+        add(int(m.group(1)), 12, 31)
+    return known, unclear
+
+
+def is_past_line(line, today=None):
+    """True only when every date in the sentence is before today.
+    Sentences with no dates, or with a date we cannot place, are never hidden."""
+    today = today or TODAY
+    known, unclear = line_dates(line)
+    return bool(known) and not unclear and all(d < today for d in known)
+
+
+def visible_lines(lines, today=None):
+    """The sentences worth showing: present or future, or without a clear date."""
+    return [l for l in lines if not is_past_line(l, today)]
+
+
+def date_warning(key_lines):
+    """If a page says applications are open but also lists a deadline that has
+    already passed, return a short warning. A person decides which is right
+    (the page may simply have a typo in the year)."""
+    if not any(OPEN_RE.search(line) for line in key_lines):
+        return ""
+    today = TODAY
+    for line in key_lines:
+        if not DEADLINE_WORD_RE.search(line):
+            continue
+        for m in FULL_DATE_RE.finditer(line):
+            try:
+                d = date(int(m.group(3)), MONTH_NUMBER[m.group(1)[:3].lower()], int(m.group(2)))
+            except (ValueError, KeyError):
+                continue
+            if d < today:
+                return ("Page says applications are open but lists a past date "
+                        f"({m.group(0)}). Check which is correct.")
+    return ""
+
+
 def now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return TODAY.isoformat()
 
 
 def clean(text):
@@ -121,6 +248,36 @@ def extract(html):
     return main_text, key_lines
 
 
+OPEN_RE = re.compile(
+    r"(?:\bnow\s+open\b|\b(?:applications?|registration)\s+(?:is|are)\s+open\b|"
+    r"\b(?:now|currently)\s+accepting\b|\bbeing\s+accepted\b|"
+    r"\bapply\s+now\b|\bregister\s+now\b)",
+    re.I,
+)
+CLOSED_RE = re.compile(
+    r"(?:\bclosed\b|\bno\s+longer\s+accepting\b|\bnot\s+(?:currently\s+)?accepting\b|"
+    r"\bdeadline\s+(?:has\s+)?passed\b)",
+    re.I,
+)
+
+
+def signal_for(all_lines, shown):
+    """What the page's own wording suggests right now (a hint, not a verdict)."""
+    if not all_lines:
+        return ""
+    if not shown:
+        return "past dates only"      # every date-like sentence is already in the past
+    text = " | ".join(shown)
+    is_open, is_closed = bool(OPEN_RE.search(text)), bool(CLOSED_RE.search(text))
+    if is_open and is_closed:
+        return "mixed"
+    if is_open:
+        return "open"
+    if is_closed:
+        return "closed"
+    return "dates only"
+
+
 def digest(text):
     return hashlib.sha256(text.lower().encode("utf-8")).hexdigest()[:16]
 
@@ -159,16 +316,38 @@ def check_one(url, prev):
             result = "new"                          # first time we've seen it
             state.update(sig=sig, key_lines=key_lines, last_changed="", prev_key_lines=[])
     elif sig != prev["sig"]:
-        result = "changed"
-        state.update(
-            sig=sig,
-            key_lines=key_lines,
-            last_changed=now_iso(),
-            prev_key_lines=prev.get("key_lines", []),
-        )
+        old_view = visible_lines(prev.get("key_lines", []))
+        new_view = visible_lines(key_lines)
+        if (key_lines or prev.get("key_lines")) and old_view == new_view:
+            result = "ok"                           # only old, already-passed dates were edited
+            state.update(sig=sig, key_lines=key_lines)
+        else:
+            result = "changed"
+            state.update(
+                sig=sig,
+                key_lines=key_lines,
+                last_changed=now_iso(),
+                prev_key_lines=prev.get("key_lines", []),
+            )
     else:
         result = "ok"
     return result, basis, status, state
+
+
+def problem_note(result, status):
+    """Plain-English reason for rows the checker could not read."""
+    if result == "error":
+        if status in (404, 410):
+            return "Page not found (404). The link may have moved; look for the new address."
+        if status >= 400:
+            return f"The website returned an error ({status}). Check the link in a browser."
+        return "Could not connect to the website. Check the link in a browser."
+    if result == "manual":
+        if status in (401, 403, 429):
+            return "The website blocks automated checks or needs a login. Check this page by hand."
+        return ("The page has almost no readable text (it may load its content with "
+                "JavaScript or need a login). Check this page by hand.")
+    return ""
 
 
 def main():
@@ -179,47 +358,72 @@ def main():
     state = json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else {}
 
     with URLS_FILE.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        found = [(c or "").strip() for c in (reader.fieldnames or [])]
         rows = [
             {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-            for row in csv.DictReader(f)
+            for row in reader
         ]
+    # Accept common header spellings for the address column (urls, website, link ...)
+    for r in rows:
+        if not r.get("url"):
+            for alias in ("urls", "website", "link", "links", "web address", "address"):
+                if r.get(alias):
+                    r["url"] = r[alias]
+                    break
     rows = [r for r in rows if r.get("url")]
+    if not rows:
+        print("ERROR: urls.csv has no usable rows, so nothing was checked.")
+        print("The FIRST line of urls.csv must be exactly:  name,url")
+        print("Every line after it must look like:  Program name,https://website")
+        print("The first line found was: " + ",".join(found))
+        sys.exit(1)
+    print(f"Checking {len(rows)} pages from urls.csv")
 
-    cache, out_rows, problems = {}, [], 0
+    cache, out_rows = {}, []
     for i, row in enumerate(rows):
         name, url = row.get("name", ""), row["url"]
-        if url in cache:
-            result, basis, status = cache[url]
-        elif not url.lower().startswith(("http://", "https://")):
+        invalid = not url.lower().startswith(("http://", "https://"))
+        if invalid:
             result, basis, status = "error", "", 0
+        elif url in cache:
+            result, basis, status = cache[url]
         else:
             result, basis, status, new_state = check_one(url, state.get(url))
             state[url] = new_state
             cache[url] = (result, basis, status)
             if i < len(rows) - 1:
                 time.sleep(PAUSE)
-        if result in ("error", "manual"):
-            problems += 1
         s = state.get(url, {})
         if url in cache or result == "error":
             s["last_checked"] = now_iso()
             state[url] = s
+        readable = result not in ("error", "manual")
+        all_lines = s.get("key_lines", []) if readable else []
+        shown = visible_lines(all_lines)
+        if invalid:
+            note = "The Website cell is not a web address. It must start with http:// or https://"
+        elif readable:
+            note = date_warning(all_lines)        # looks at ALL sentences, including old ones
+        else:
+            note = problem_note(result, status)
         out_rows.append({
             "name": name,
             "url": url,
             "check_result": result,
             "basis": basis,
+            "signal": signal_for(all_lines, shown) if readable else "",
             "last_checked": now_iso(),
             "last_changed": s.get("last_changed", ""),
-            "http_status": status,
-            "key_lines": " | ".join(s.get("key_lines", []))[:600],
+            "key_lines": " | ".join(shown)[:600],
             "previous_key_lines": " | ".join(s.get("prev_key_lines", []))[:600],
+            "warning": note,
         })
-        print(f"{result:8} {url}")
+        print(f"{result:8} {status:<4} {url}")
 
     STATE_FILE.write_text(json.dumps(state, indent=1, ensure_ascii=False), "utf-8")
-    fields = ["name", "url", "check_result", "basis", "last_checked",
-              "last_changed", "http_status", "key_lines", "previous_key_lines"]
+    fields = ["name", "url", "check_result", "basis", "signal", "last_checked",
+              "last_changed", "key_lines", "previous_key_lines", "warning"]
     with OUTPUT_FILE.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
