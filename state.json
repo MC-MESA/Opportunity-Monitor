@@ -512,13 +512,16 @@
   "last_checked": "2026-11-02"
  },
  "https://www.simonsfoundation.org/grant/shenoy-undergraduate-research-fellowship-in-neuroscience-surfin/?tab=rfa": {
-  "sig": "1c438b0a9b6882d3",
+  "sig": "9110c4b1f47a95e9",
   "key_lines": [
+   "Apply by February 25, 2027",
+   "Apply by January 13, 2027"
+  ],
+  "last_changed": "2026-11-02",
+  "prev_key_lines": [
    "Apply by January 13, 2027",
    "Apply by January 27, 2027"
   ],
-  "last_changed": "",
-  "prev_key_lines": [],
   "last_checked": "2026-11-02"
  },
  "https://berkeley.qualtrics.com/jfe/form/SV_2slZl8hB1lrVOIu": {
@@ -556,9 +559,9 @@
   "last_checked": "2026-11-02"
  },
  "https://amgenscholars.com/us-program/": {
-  "sig": "f74f0a2518296227",
+  "sig": "bd936ca5f6e88f03",
   "key_lines": [],
-  "last_changed": "2026-10-28",
+  "last_changed": "2026-11-02",
   "prev_key_lines": [],
   "last_checked": "2026-11-02"
  }
