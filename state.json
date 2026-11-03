@@ -339,15 +339,17 @@
   "last_checked": "2026-11-03"
  },
  "https://med.stanford.edu/cvi/education/cvi-summer-research-program.html": {
-  "sig": "1c2709811ba8e744",
+  "sig": "616e3b2daf246727",
   "key_lines": [
    "Applications due December 18, 2026 11:59 PM PST",
    "Letters of Recommendation Submission deadline is January 3, 2027 11:59 pm PST.",
-   "Application deadline: December 19, 2025",
-   "Submission deadline: January 5, 2026"
+   "Application deadline: December 18, 2026",
+   "Submission deadline: January 3, 2027."
   ],
-  "last_changed": "2026-10-26",
+  "last_changed": "2026-11-03",
   "prev_key_lines": [
+   "Applications due December 18, 2026 11:59 PM PST",
+   "Letters of Recommendation Submission deadline is January 3, 2027 11:59 pm PST.",
    "Application deadline: December 19, 2025",
    "Submission deadline: January 5, 2026"
   ],
@@ -578,16 +580,18 @@
   "last_checked": "2026-11-03"
  },
  "https://education.scripps.edu/undergraduate/summer-research/surf-program/": {
-  "sig": "d0f96e172a216c2e",
-  "key_lines": [],
-  "last_changed": "2026-11-02",
+  "sig": "8e836bceef069585",
+  "key_lines": [
+   "Register for our 11/18 Virtual Open House!"
+  ],
+  "last_changed": "2026-11-03",
   "prev_key_lines": [],
   "last_checked": "2026-11-03"
  },
  "https://amgenscholars.com/us-program/": {
-  "sig": "bd936ca5f6e88f03",
+  "sig": "3c4c7172d8bebb68",
   "key_lines": [],
-  "last_changed": "2026-11-02",
+  "last_changed": "2026-11-03",
   "prev_key_lines": [],
   "last_checked": "2026-11-03"
  },
