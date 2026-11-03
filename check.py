@@ -36,6 +36,11 @@ TODAY = (date.fromisoformat(os.environ["CHECKER_TODAY"])
 URLS_FILE = Path("urls.csv")
 STATE_FILE = Path("state.json")
 OUTPUT_FILE = Path("changes.csv")
+CHANGE_LOG = Path("change-log.csv")
+CHANGE_LOG_MAX = 300        # keep the newest 300 detected changes
+# Bump this when the reading rules change. The first run after a bump quietly
+# re-records every page instead of flagging a wave of false "changed" rows.
+RULES_VERSION = 3
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; CollegeOpportunityTracker/1.0)",
@@ -66,8 +71,16 @@ STATUS_RE = re.compile(
     r"(applications?\s+(?:are\s+)?(?:now\s+)?(?:open|closed)|now\s+open|"
     r"now\s+accepting|currently\s+accepting|no\s+longer\s+accepting|"
     r"applications?\s+(?:has|have)\s+closed|opens?\s+soon|coming\s+soon|"
-    r"register\s+now|apply\s+now|registration\s+(?:is\s+)?(?:now\s+)?(?:open|closed)|"
+    r"registration\s+(?:is\s+)?(?:now\s+)?(?:open|closed)|"
     r"applications?\s+(?:are\s+)?(?:now\s+)?being\s+accepted)",
+    re.I,
+)
+# Sentences that say something is closed, in the many ways websites word it.
+CLOSED_LINE_RE = re.compile(
+    r"(?:\(closed\)|\bnow\s+closed\b|\b(?:is|are|has|have|been)\s+closed\b|"
+    r"\bno\s+longer\s+accepting\b|\bnot\s+(?:currently\s+)?accepting\b|"
+    r"\bclosed\s+for\b|\bapplications?\s+closed\b|\bdeadline\s+(?:has\s+)?passed\b|"
+    r"\breturn\s+next\s+year\b)",
     re.I,
 )
 LOGIN_HINTS = ("login", "signin", "sign-in", "sso", "auth")
@@ -227,6 +240,8 @@ def extract(html):
     for tag in soup(["script", "style", "noscript", "svg", "template"]):
         tag.decompose()
     whole = BeautifulSoup(str(soup), "html.parser")
+    for tag in whole.find_all("nav") + whole.select('[role="navigation"]'):
+        tag.decompose()          # menus often advertise OTHER programs ("Registration Open")
     for tag in soup(["header", "footer", "nav"]):
         tag.decompose()
     main_text = clean(soup.get_text("\n"))
@@ -238,7 +253,8 @@ def extract(html):
         line = clean(part)
         if len(line) < 12 or len(line) > 400:
             continue
-        if (KEYWORD_RE.search(line) and DATE_RE.search(line)) or STATUS_RE.search(line):
+        if ((KEYWORD_RE.search(line) and DATE_RE.search(line))
+                or STATUS_RE.search(line) or CLOSED_LINE_RE.search(line)):
             low = line.lower()
             if low not in seen:
                 seen.add(low)
@@ -248,33 +264,42 @@ def extract(html):
     return main_text, key_lines
 
 
+# "Apply now" / "Register now" are permanent buttons on many closed pages, so they
+# are NOT treated as proof that something is open.
 OPEN_RE = re.compile(
     r"(?:\bnow\s+open\b|\b(?:applications?|registration)\s+(?:is|are)\s+open\b|"
-    r"\b(?:now|currently)\s+accepting\b|\bbeing\s+accepted\b|"
-    r"\bapply\s+now\b|\bregister\s+now\b)",
+    r"\b(?:now|currently)\s+accepting\b|\bbeing\s+accepted\b)",
     re.I,
 )
 CLOSED_RE = re.compile(
     r"(?:\bclosed\b|\bno\s+longer\s+accepting\b|\bnot\s+(?:currently\s+)?accepting\b|"
-    r"\bdeadline\s+(?:has\s+)?passed\b)",
+    r"\bdeadline\s+(?:has\s+)?passed\b|\breturn\s+next\s+year\b)",
     re.I,
 )
 
 
 def signal_for(all_lines, shown):
-    """What the page's own wording suggests right now (a hint, not a verdict)."""
+    """What the page's own wording suggests right now (a hint, not a verdict).
+
+    open         says it is open, nothing contradicts it
+    closed       says it is closed (even if the sentence carries an old date)
+    check dates  says "open" but also lists a deadline that has already passed
+    mixed        has both open and closed wording
+    dates only   has dates, but nothing that says open or closed
+    past dates only   every date-like sentence is already in the past
+    """
     if not all_lines:
         return ""
-    if not shown:
-        return "past dates only"      # every date-like sentence is already in the past
-    text = " | ".join(shown)
-    is_open, is_closed = bool(OPEN_RE.search(text)), bool(CLOSED_RE.search(text))
-    if is_open and is_closed:
+    open_hit = any(OPEN_RE.search(l) for l in shown)        # old "open" sentences do not count
+    closed_hit = any(CLOSED_RE.search(l) for l in all_lines)
+    if open_hit and closed_hit:
         return "mixed"
-    if is_open:
-        return "open"
-    if is_closed:
+    if closed_hit:
         return "closed"
+    if open_hit:
+        return "check dates" if date_warning(all_lines) else "open"
+    if not shown:
+        return "past dates only"
     return "dates only"
 
 
@@ -282,7 +307,7 @@ def digest(text):
     return hashlib.sha256(text.lower().encode("utf-8")).hexdigest()[:16]
 
 
-def check_one(url, prev):
+def check_one(url, prev, rebaseline=False):
     """Check a single URL. Returns (result, basis, http_status, new_state)."""
     state = dict(prev) if prev else {}
     status, html, final_url, error = fetch(url)
@@ -315,6 +340,9 @@ def check_one(url, prev):
         else:
             result = "new"                          # first time we've seen it
             state.update(sig=sig, key_lines=key_lines, last_changed="", prev_key_lines=[])
+    elif sig != prev["sig"] and rebaseline:
+        result = "ok"                               # reading rules changed; re-record quietly
+        state.update(sig=sig, key_lines=key_lines)
     elif sig != prev["sig"]:
         old_view = visible_lines(prev.get("key_lines", []))
         new_view = visible_lines(key_lines)
@@ -332,6 +360,31 @@ def check_one(url, prev):
     else:
         result = "ok"
     return result, basis, status, state
+
+
+LOG_FIELDS = ["date", "name", "url", "signal", "previous_key_lines", "key_lines", "warning"]
+
+
+def update_change_log(out_rows):
+    """Keep change-log.csv: only opportunities whose page changed, newest first."""
+    existing = []
+    if CHANGE_LOG.exists():
+        with CHANGE_LOG.open(newline="", encoding="utf-8-sig") as f:
+            existing = list(csv.DictReader(f))
+    seen = {(r.get("date"), r.get("url")) for r in existing}
+    new = [
+        {"date": now_iso(), "name": r["name"], "url": r["url"], "signal": r["signal"],
+         "previous_key_lines": r["previous_key_lines"], "key_lines": r["key_lines"],
+         "warning": r["warning"]}
+        for r in out_rows
+        if r["check_result"] == "changed" and (now_iso(), r["url"]) not in seen
+    ]
+    rows = (new + existing)[:CHANGE_LOG_MAX]
+    with CHANGE_LOG.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=LOG_FIELDS, restval="", extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    return len(new)
 
 
 def problem_note(result, status):
@@ -380,6 +433,9 @@ def main():
         sys.exit(1)
     print(f"Checking {len(rows)} pages from urls.csv")
 
+    rebaseline = state.get("__rules__") != RULES_VERSION
+    if rebaseline and len(state) > 0:
+        print("Reading rules were updated: this run re-records every page without flagging changes.")
     cache, out_rows = {}, []
     for i, row in enumerate(rows):
         name, url = row.get("name", ""), row["url"]
@@ -389,7 +445,7 @@ def main():
         elif url in cache:
             result, basis, status = cache[url]
         else:
-            result, basis, status, new_state = check_one(url, state.get(url))
+            result, basis, status, new_state = check_one(url, state.get(url), rebaseline)
             state[url] = new_state
             cache[url] = (result, basis, status)
             if i < len(rows) - 1:
@@ -421,6 +477,7 @@ def main():
         })
         print(f"{result:8} {status:<4} {url}")
 
+    state["__rules__"] = RULES_VERSION
     STATE_FILE.write_text(json.dumps(state, indent=1, ensure_ascii=False), "utf-8")
     fields = ["name", "url", "check_result", "basis", "signal", "last_checked",
               "last_changed", "key_lines", "previous_key_lines", "warning"]
@@ -428,6 +485,9 @@ def main():
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         writer.writerows(out_rows)
+
+    logged = update_change_log(out_rows)
+    print(f"Changes logged today: {logged}")
 
     # If most pages failed, something is wrong (e.g. no internet) - fail loudly
     # so GitHub emails the repo admins.
