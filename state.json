@@ -609,5 +609,16 @@
   "prev_key_lines": [],
   "last_checked": "2026-11-23"
  },
- "__rules__": 3
+ "__rules__": 3,
+ "https://digitalag.illinois.edu/education/reu-program/": {
+  "sig": "d2332b10e58816d6",
+  "key_lines": [
+   "📣 Applications for the 2027 CDA REU is now open!",
+   "Submit your application by February 14, 2027, at 11:59 PM ET",
+   "Applications for the 2027 CDA REU program is now open."
+  ],
+  "last_changed": "",
+  "prev_key_lines": [],
+  "last_checked": "2026-11-23"
+ }
 }
